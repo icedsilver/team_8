@@ -2,7 +2,7 @@ import numpy as np
 import rclpy
 from rclpy.node import Node
 
-from pbvs_control.ik_module import Planar2DOFIK, wrap_to_pi
+from .ik_module import Planar2DOFIK, wrap_to_pi
 
 # ==============================================================================
 # [TODO 1] 팀원(인식/시뮬레이션)과 맞춘 메시지 타입 import 및 지정
