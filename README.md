@@ -39,3 +39,13 @@ chmod +x src/twolink_gazebo/scripts/dummy_data_publisher.py
 
 ros2 run pbvs_control pbvs_control_node.py
 
+-------------------------------------------------------------
+source /opt/ros/$ROS_DISTRO/setup.bash
+source ~/ros2_ws/install/setup.bash
+
+ros2 topic list
+
+ros2 topic list -t
+
+ros2 topic hz /joint_states
+ros2 topic echo /aruco/detected --once
