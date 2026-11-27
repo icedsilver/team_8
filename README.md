@@ -14,7 +14,7 @@ source ~/ros2_ws/install/setup.bash
 ros2 run rqt_image_view rqt_image_view
 
 
-시각화
+시각화))
 터미널 1: rviz,gazebo 실행
 ros2 launch twolink_gazebo gazebo.launch.py
 
@@ -23,3 +23,16 @@ ros2 run twolink_control serial_node
 
 터미널 3: 로봇 시각화
 ros2 run twolink_gazebo joint_publisher.py
+
+
+cmakelists.txt 수정)) : ament_package()위에 작성
+install(PROGRAMS
+  scripts/joint_publisher.py
+  scripts/dummy_data_publisher.py
+  DESTINATION lib/${PROJECT_NAME}
+)
+>>명령어 실행
+cd ~/ros2_ws
+
+chmod +x src/twolink_gazebo/scripts/joint_publisher.py
+chmod +x src/twolink_gazebo/scripts/dummy_data_publisher.py
