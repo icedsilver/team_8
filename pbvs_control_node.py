@@ -17,7 +17,7 @@ class SmoothPBVSControllerNode(Node):
 
         # --- 1. 로봇 기구 파라미터 (URDF 반영) ---
         self.L1 = 0.143                 # joint1 ~ joint2 거리 (m)
-        self.L2 =                  # joint2 ~ 카메라 중심 거리 (m, 실측 후 보정)
+        self.L2 = 0.102                # joint2 ~ 카메라 중심 거리 (m, 실측 후 보정)
         self.camera_yaw_offset = 0.0    # 카메라 장착 각도 오프셋 (rad)
 
         # --- 2. PBVS 및 부드러운 제어 파라미터 ---
