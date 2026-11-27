@@ -49,3 +49,15 @@ ros2 topic list -t
 
 ros2 topic hz /joint_states
 ros2 topic echo /aruco/detected --once
+
+source /opt/ros/$ROS_DISTRO/setup.bash
+source ~/ros2_ws/install/setup.bash
+ros2 launch twolink_gazebo <런치파일명>.launch.py
+
+source /opt/ros/$ROS_DISTRO/setup.bash
+source ~/ros2_ws/install/setup.bash
+ros2 run <인식_패키지명> aruco_detector_node_realsense
+
+source /opt/ros/$ROS_DISTRO/setup.bash
+source ~/ros2_ws/install/setup.bash
+ros2 run pbvs_control <실행파일명>
