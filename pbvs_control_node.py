@@ -2,9 +2,11 @@ import numpy as np
 import rclpy
 from rclpy.node import Node
 
+from builtin_interfaces.msg import Duration
 from geometry_msgs.msg import PoseStamped
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Bool, Float64MultiArray
+from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 from .ik_module import Planar2DOFIK, wrap_to_pi
 
@@ -13,33 +15,34 @@ class SmoothPBVSControllerNode(Node):
     def __init__(self):
         super().__init__("smooth_pbvs_controller")
 
-        # --- 1. 로봇 기구 파라미터 (실제 URDF 링크 길이에 맞게 수정) ---
-        self.L1 = 0.40                  # 링크 1 길이 (m)
-        self.L2 = 0.35                  # 링크 2 길이 (m)
+        # --- 1. 로봇 기구 파라미터 (URDF 반영) ---
+        self.L1 = 0.143                 # joint1 ~ joint2 거리 (m)
+        self.L2 = 0.150                 # joint2 ~ 카메라 중심 거리 (m, 실측 후 보정)
         self.camera_yaw_offset = 0.0    # 카메라 장착 각도 오프셋 (rad)
 
         # --- 2. PBVS 및 부드러운 제어 파라미터 ---
         self.target_dist = 0.30                 # 목표 거리 30cm (m)
-        self.kp = 0.25                          # 비례 게인 (0.15 ~ 0.4 추천)
-        self.deadband = 0.008                   # 정지 허용 오차 (8mm 이내면 정지)
-        self.filter_alpha = 0.3                 # EMA 저역통과 필터 계수 (낮을수록 부드러움)
+        self.kp = 0.25                          # 비례 게인
+        self.deadband = 0.008                   # 정지 허용 오차 (8mm)
+        self.filter_alpha = 0.3                 # EMA 저역통과 필터 계수
         self.control_hz = 30.0                  # 제어 루프 주기 (Hz)
         self.max_vel_rad_s = np.deg2rad(45.0)   # 최대 관절 회전 속도 (rad/s)
         self.marker_timeout = 0.5               # 마커 미수신 시 정지 타임아웃 (초)
 
-        # --- 3. 토픽명 및 조인트 이름 설정 (팀원과 이름만 맞추면 됨) ---
+        # --- 3. 토픽명 및 조인트 이름 설정 (YAML/URDF 반영) ---
         MARKER_POSE_TOPIC = "/aruco/marker_pose"
         MARKER_DETECTED_TOPIC = "/aruco/detected"
         JOINT_STATE_TOPIC = "/joint_states"
-        JOINT_CMD_TOPIC = "/position_controller/commands"  # 목표 절대 각도 발행
-        SIM_DELTA_TOPIC = "/sim/joint_delta"               # 시뮬레이션용 이동량(Δθ) 발행
+        JOINT_CMD_TOPIC = "/joint_trajectory_controller/joint_trajectory"
+        SIM_DELTA_TOPIC = "/sim/joint_delta"
 
-        self.theta1_name = "theta1"
-        self.theta2_name = "theta2"
+        self.theta1_name = "joint1"
+        self.theta2_name = "joint2"
 
         # --- 4. 내부 객체 및 상태 변수 ---
         self.ik = Planar2DOFIK(self.L1, self.L2)
         self.max_step_rad = self.max_vel_rad_s / self.control_hz
+        self.dt = 1.0 / self.control_hz
 
         self.curr_theta1 = None
         self.curr_theta2 = None
@@ -53,14 +56,14 @@ class SmoothPBVSControllerNode(Node):
         self.create_subscription(Bool, MARKER_DETECTED_TOPIC, self.marker_detected_callback, 10)
         self.create_subscription(JointState, JOINT_STATE_TOPIC, self.joint_state_callback, 10)
 
-        self.cmd_pub = self.create_publisher(Float64MultiArray, JOINT_CMD_TOPIC, 10)
+        self.cmd_pub = self.create_publisher(JointTrajectory, JOINT_CMD_TOPIC, 10)
         self.sim_delta_pub = self.create_publisher(Float64MultiArray, SIM_DELTA_TOPIC, 10)
 
-        self.timer = self.create_timer(1.0 / self.control_hz, self.control_loop)
+        self.timer = self.create_timer(self.dt, self.control_loop)
         self.get_logger().info("Smooth PBVS Controller Node initialized.")
 
     def joint_state_callback(self, msg: JointState):
-        """현재 관절 각도(rad) 수신 — 이름 기반 매핑으로 순서 꼬임 방지"""
+        """현재 관절 각도(rad) 수신 — 이름 기반 매핑"""
         name_to_pos = dict(zip(msg.name, msg.position))
         if self.theta1_name in name_to_pos and self.theta2_name in name_to_pos:
             self.curr_theta1 = float(name_to_pos[self.theta1_name])
@@ -94,6 +97,19 @@ class SmoothPBVSControllerNode(Node):
         delta_msg.data = [float(d_theta1), float(d_theta2)]
         self.sim_delta_pub.publish(delta_msg)
 
+    def publish_joint_trajectory(self, next_theta1: float, next_theta2: float):
+        """JointTrajectoryController로 목표 각도 발행"""
+        traj = JointTrajectory()
+        traj.joint_names = [self.theta1_name, self.theta2_name]
+
+        point = JointTrajectoryPoint()
+        point.positions = [float(next_theta1), float(next_theta2)]
+        # 다음 제어 주기(약 0.033초) 안에 부드럽게 도달하도록 설정
+        point.time_from_start = Duration(sec=0, nanosec=int(self.dt * 1e9))
+
+        traj.points.append(point)
+        self.cmd_pub.publish(traj)
+
     def control_loop(self):
         """30Hz 고정 주기 제어 루프"""
         if (
@@ -113,7 +129,7 @@ class SmoothPBVSControllerNode(Node):
 
         # 1. 오차 계산 (목표: 정면 30cm, 좌우 0cm)
         e_fwd = self.filt_z_cam - self.target_dist
-        e_lat = -self.filt_x_cam  # OpenCV/ROS Optical 오른쪽(+x) -> 평면 왼쪽(+y) 반전
+        e_lat = -self.filt_x_cam
 
         # 2. 데드존 이내면 정지 (미세 떨림 방지)
         if abs(e_fwd) < self.deadband and abs(e_lat) < self.deadband:
@@ -139,10 +155,8 @@ class SmoothPBVSControllerNode(Node):
         next_theta1 = wrap_to_pi(self.curr_theta1 + d_theta1)
         next_theta2 = wrap_to_pi(self.curr_theta2 + d_theta2)
 
-        # 5. 목표 절대 각도 발행 (로봇 컨트롤러용)
-        cmd = Float64MultiArray()
-        cmd.data = [next_theta1, next_theta2]
-        self.cmd_pub.publish(cmd)
+        # 5. Gazebo JointTrajectoryController로 목표 각도 발행
+        self.publish_joint_trajectory(next_theta1, next_theta2)
 
         # 6. 조인트 이동량 발행 (실시간 시뮬레이션 시각화용)
         self.publish_sim_delta(d_theta1, d_theta2)
