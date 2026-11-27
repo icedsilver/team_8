@@ -61,3 +61,8 @@ ros2 run <인식_패키지명> aruco_detector_node_realsense
 source /opt/ros/$ROS_DISTRO/setup.bash
 source ~/ros2_ws/install/setup.bash
 ros2 run pbvs_control <실행파일명>
+
+source /opt/ros/$ROS_DISTRO/setup.bash
+source ~/ros2_ws/install/setup.bash
+ros2 topic list
+ros2 topic echo /aruco/detected --once
