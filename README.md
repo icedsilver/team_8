@@ -36,3 +36,6 @@ cd ~/ros2_ws
 
 chmod +x src/twolink_gazebo/scripts/joint_publisher.py
 chmod +x src/twolink_gazebo/scripts/dummy_data_publisher.py
+
+ros2 run pbvs_control
+
