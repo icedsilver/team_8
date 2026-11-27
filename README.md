@@ -66,3 +66,13 @@ source /opt/ros/$ROS_DISTRO/setup.bash
 source ~/ros2_ws/install/setup.bash
 ros2 topic list
 ros2 topic echo /aruco/detected --once
+
+
+[INFO] [1795770050.549502225] [smooth_pbvs_controller]: e_fwd=-0.098, e_lat=-0.028 | d1=0.0262, d2=-0.0262 -> next=(0.026, -0.026)
+[INFO] [1795770051.081573158] [smooth_pbvs_controller]: e_fwd=-0.104, e_lat=-0.042 | d1=0.0262, d2=-0.0262 -> next=(0.026, -0.026)
+[INFO] [1795770051.615451828] [smooth_pbvs_controller]: e_fwd=-0.099, e_lat=-0.030 | d1=0.0262, d2=-0.0262 -> next=(0.026, -0.026)
+[INFO] [1795770052.216287193] [smooth_pbvs_controller]: e_fwd=-0.102, e_lat=-0.045 | d1=0.0262, d2=-0.0262 -> next=(0.026, -0.026)
+[INFO] [1795770052.748181404] [smooth_pbvs_controller]: e_fwd=-0.113, e_lat=-0.036 | d1=0.0262, d2=-0.0262 -> next=(0.026, -0.026)
+[INFO] [1795770053.281623567] [smooth_pbvs_controller]: e_fwd=-0.127, e_lat=-0.057 | d1=0.0262, d2=-0.0262 -> next=(0.026, -0.026)
+[INFO] [1795770054.382067160] [smooth_pbvs_controller]: e_fwd=-0.142, e_lat=-0.048 | d1=0.0262, d2=-0.0262 -> next=(0.026, -0.026)
+
