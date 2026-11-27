@@ -97,33 +97,35 @@ class SmoothPBVSControllerNode(Node):
         delta_msg.data = [float(d_theta1), float(d_theta2)]
         self.sim_delta_pub.publish(delta_msg)
 
-    def publish_joint_trajectory(self, next_theta1: float, next_theta2: float):
+    def publish_joint_trajectory(self, next_theta1: float, next_theta2: float, d_theta1: float, d_theta2: float):
         """JointTrajectoryController로 목표 각도 발행"""
         traj = JointTrajectory()
+        traj.header.stamp = self.get_clock().now().to_msg()
         traj.joint_names = [self.theta1_name, self.theta2_name]
 
         point = JointTrajectoryPoint()
         point.positions = [float(next_theta1), float(next_theta2)]
-        # 다음 제어 주기(약 0.033초) 안에 부드럽게 도달하도록 설정
-        point.time_from_start = Duration(sec=0, nanosec=int(self.dt * 1e9))
+        point.velocities = [float(d_theta1 / self.dt), float(d_theta2 / self.dt)]
+        point.time_from_start = Duration(sec=0, nanosec=int(self.dt * 2.0 * 1e9))
 
         traj.points.append(point)
         self.cmd_pub.publish(traj)
 
     def control_loop(self):
         """30Hz 고정 주기 제어 루프"""
-        if (
-            not self.marker_detected
-            or self.curr_theta1 is None
-            or self.filt_x_cam is None
-            or self.last_marker_time is None
-        ):
+        if self.curr_theta1 is None or self.curr_theta2 is None:
+            self.get_logger().warn("Waiting for /joint_states (joint1, joint2)...", throttle_duration_sec=1.0)
+            self.publish_sim_delta(0.0, 0.0)
+            return
+
+        if not self.marker_detected or self.filt_x_cam is None or self.last_marker_time is None:
             self.publish_sim_delta(0.0, 0.0)
             return
 
         # 마커 유실 워치독: 타임아웃 초과 시 이동 중단
         elapsed = (self.get_clock().now() - self.last_marker_time).nanoseconds * 1e-9
         if elapsed > self.marker_timeout:
+            self.get_logger().warn("Marker timeout -> holding position", throttle_duration_sec=1.0)
             self.publish_sim_delta(0.0, 0.0)
             return
 
@@ -133,6 +135,7 @@ class SmoothPBVSControllerNode(Node):
 
         # 2. 데드존 이내면 정지 (미세 떨림 방지)
         if abs(e_fwd) < self.deadband and abs(e_lat) < self.deadband:
+            self.get_logger().info("Inside deadband -> stop", throttle_duration_sec=1.0)
             self.publish_sim_delta(0.0, 0.0)
             return
 
@@ -155,8 +158,13 @@ class SmoothPBVSControllerNode(Node):
         next_theta1 = wrap_to_pi(self.curr_theta1 + d_theta1)
         next_theta2 = wrap_to_pi(self.curr_theta2 + d_theta2)
 
+        self.get_logger().info(
+            f"e_fwd={e_fwd:.3f}, e_lat={e_lat:.3f} | d1={d_theta1:.4f}, d2={d_theta2:.4f} -> next=({next_theta1:.3f}, {next_theta2:.3f})",
+            throttle_duration_sec=0.5,
+        )
+
         # 5. Gazebo JointTrajectoryController로 목표 각도 발행
-        self.publish_joint_trajectory(next_theta1, next_theta2)
+        self.publish_joint_trajectory(next_theta1, next_theta2, d_theta1, d_theta2)
 
         # 6. 조인트 이동량 발행 (실시간 시뮬레이션 시각화용)
         self.publish_sim_delta(d_theta1, d_theta2)
@@ -176,3 +184,14 @@ def main(args=None):
 
 if __name__ == "__main__":
     main()
+```[cite: 6, 7]
+
+---
+
+### 3. 실행 후 바로 확인해 볼 것
+
+빌드(`colcon build --packages-select pbvs_control --symlink-install`) 후 실행했을 때 터미널에 어떤 로그가 뜨는지 봐주세요[cite: 6].
+* `Waiting for /joint_states...`가 뜨면 `/joint_states` 발행 쪽 문제입니다[cite: 6].
+* `e_fwd=... | d1=...` 로그가 정상적으로 찍히는데도 팔만 안 움직이면, **명령 토픽(`/joint_trajectory_controller/joint_trajectory`)이나 컨트롤러 상태(`ros2 control list_controllers`)** 쪽에서 명령을 안 받고 있는 겁니다[cite: 6].
+
+실행했을 때 터미널에 뜨는 로그나 `ros2 control list_controllers` 결과를 알려주면 바로 원인 짚어드릴게요.
