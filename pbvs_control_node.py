@@ -2,17 +2,11 @@ import numpy as np
 import rclpy
 from rclpy.node import Node
 
-from .ik_module import Planar2DOFIK, wrap_to_pi
+from geometry_msgs.msg import PoseStamped
+from sensor_msgs.msg import JointState
+from std_msgs.msg import Bool, Float64MultiArray
 
-# ==============================================================================
-# [TODO 1] 팀원(인식/시뮬레이션)과 맞춘 메시지 타입 import 및 지정
-# 예: from geometry_msgs.msg import PointStamped
-# 예: from sensor_msgs.msg import JointState
-# 예: from std_msgs.msg import Float64MultiArray
-# ==============================================================================
-MARKER_MSG_TYPE = None       # TODO
-JOINT_STATE_MSG_TYPE = None  # TODO
-JOINT_CMD_MSG_TYPE = None    # TODO
+from .ik_module import Planar2DOFIK, wrap_to_pi
 
 
 class SmoothPBVSControllerNode(Node):
@@ -33,10 +27,12 @@ class SmoothPBVSControllerNode(Node):
         self.max_vel_rad_s = np.deg2rad(45.0)   # 최대 관절 회전 속도 (rad/s)
         self.marker_timeout = 0.5               # 마커 미수신 시 정지 타임아웃 (초)
 
-        # --- 3. [TODO 2] 토픽명 및 조인트 이름 설정 ---
-        MARKER_TOPIC = ""       # TODO: 인식 파트 마커 3D 위치 토픽
-        JOINT_STATE_TOPIC = ""  # TODO: 현재 조인트 각도 수신 토픽
-        JOINT_CMD_TOPIC = ""    # TODO: 조인트 목표 각도 발행 토픽
+        # --- 3. 토픽명 및 조인트 이름 설정 (팀원과 이름만 맞추면 됨) ---
+        MARKER_POSE_TOPIC = "/aruco/marker_pose"
+        MARKER_DETECTED_TOPIC = "/aruco/detected"
+        JOINT_STATE_TOPIC = "/joint_states"
+        JOINT_CMD_TOPIC = "/position_controller/commands"  # 목표 절대 각도 발행
+        SIM_DELTA_TOPIC = "/sim/joint_delta"               # 시뮬레이션용 이동량(Δθ) 발행
 
         self.theta1_name = "theta1"
         self.theta2_name = "theta2"
@@ -47,32 +43,40 @@ class SmoothPBVSControllerNode(Node):
 
         self.curr_theta1 = None
         self.curr_theta2 = None
+        self.marker_detected = False
         self.filt_x_cam = None
         self.filt_z_cam = None
         self.last_marker_time = None
 
         # --- 5. ROS 2 통신 및 타이머 ---
-        self.create_subscription(MARKER_MSG_TYPE, MARKER_TOPIC, self.marker_callback, 10)
-        self.create_subscription(JOINT_STATE_MSG_TYPE, JOINT_STATE_TOPIC, self.joint_state_callback, 10)
-        self.cmd_pub = self.create_publisher(JOINT_CMD_MSG_TYPE, JOINT_CMD_TOPIC, 10)
+        self.create_subscription(PoseStamped, MARKER_POSE_TOPIC, self.marker_callback, 10)
+        self.create_subscription(Bool, MARKER_DETECTED_TOPIC, self.marker_detected_callback, 10)
+        self.create_subscription(JointState, JOINT_STATE_TOPIC, self.joint_state_callback, 10)
+
+        self.cmd_pub = self.create_publisher(Float64MultiArray, JOINT_CMD_TOPIC, 10)
+        self.sim_delta_pub = self.create_publisher(Float64MultiArray, SIM_DELTA_TOPIC, 10)
 
         self.timer = self.create_timer(1.0 / self.control_hz, self.control_loop)
         self.get_logger().info("Smooth PBVS Controller Node initialized.")
 
-    def joint_state_callback(self, msg):
+    def joint_state_callback(self, msg: JointState):
         """현재 관절 각도(rad) 수신 — 이름 기반 매핑으로 순서 꼬임 방지"""
-        # [TODO 3] 사용하는 메시지 구조에 맞게 추출 방식 확인 (JointState 기준 예시)
         name_to_pos = dict(zip(msg.name, msg.position))
         if self.theta1_name in name_to_pos and self.theta2_name in name_to_pos:
             self.curr_theta1 = float(name_to_pos[self.theta1_name])
             self.curr_theta2 = float(name_to_pos[self.theta2_name])
 
-    def marker_callback(self, msg):
+    def marker_detected_callback(self, msg: Bool):
+        """마커 검출 여부 수신 — 마커가 사라지면 필터 초기화"""
+        self.marker_detected = bool(msg.data)
+        if not self.marker_detected:
+            self.filt_x_cam = None
+            self.filt_z_cam = None
+
+    def marker_callback(self, msg: PoseStamped):
         """인식 파트에서 마커의 카메라 기준 순수 3D 위치(m) 수신 및 EMA 필터링"""
-        # [TODO 4] 메시지 필드에 맞게 카메라 기준 좌우(x), 깊이(z) 추출
-        # 예: raw_x = float(msg.point.x), raw_z = float(msg.point.z)
-        raw_x = 0.0  # TODO
-        raw_z = 0.0  # TODO
+        raw_x = float(msg.pose.position.x)
+        raw_z = float(msg.pose.position.z)
 
         if self.filt_x_cam is None:
             self.filt_x_cam = raw_x
@@ -84,14 +88,27 @@ class SmoothPBVSControllerNode(Node):
 
         self.last_marker_time = self.get_clock().now()
 
+    def publish_sim_delta(self, d_theta1: float, d_theta2: float):
+        """시뮬레이션 파트로 조인트 이동량(rad) 발행"""
+        delta_msg = Float64MultiArray()
+        delta_msg.data = [float(d_theta1), float(d_theta2)]
+        self.sim_delta_pub.publish(delta_msg)
+
     def control_loop(self):
         """30Hz 고정 주기 제어 루프"""
-        if self.curr_theta1 is None or self.filt_x_cam is None or self.last_marker_time is None:
+        if (
+            not self.marker_detected
+            or self.curr_theta1 is None
+            or self.filt_x_cam is None
+            or self.last_marker_time is None
+        ):
+            self.publish_sim_delta(0.0, 0.0)
             return
 
         # 마커 유실 워치독: 타임아웃 초과 시 이동 중단
         elapsed = (self.get_clock().now() - self.last_marker_time).nanoseconds * 1e-9
         if elapsed > self.marker_timeout:
+            self.publish_sim_delta(0.0, 0.0)
             return
 
         # 1. 오차 계산 (목표: 정면 30cm, 좌우 0cm)
@@ -100,6 +117,7 @@ class SmoothPBVSControllerNode(Node):
 
         # 2. 데드존 이내면 정지 (미세 떨림 방지)
         if abs(e_fwd) < self.deadband and abs(e_lat) < self.deadband:
+            self.publish_sim_delta(0.0, 0.0)
             return
 
         # 3. 베이스 좌표계 목표 위치 계산
@@ -121,10 +139,13 @@ class SmoothPBVSControllerNode(Node):
         next_theta1 = wrap_to_pi(self.curr_theta1 + d_theta1)
         next_theta2 = wrap_to_pi(self.curr_theta2 + d_theta2)
 
-        # 5. [TODO 5] 명령 메시지 채우기 및 발행
-        cmd = JOINT_CMD_MSG_TYPE()
-        # 예 (Float64MultiArray): cmd.data = [next_theta1, next_theta2]
+        # 5. 목표 절대 각도 발행 (로봇 컨트롤러용)
+        cmd = Float64MultiArray()
+        cmd.data = [next_theta1, next_theta2]
         self.cmd_pub.publish(cmd)
+
+        # 6. 조인트 이동량 발행 (실시간 시뮬레이션 시각화용)
+        self.publish_sim_delta(d_theta1, d_theta2)
 
 
 def main(args=None):
