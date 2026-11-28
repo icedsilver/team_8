@@ -2,8 +2,7 @@ import rclpy
 from rclpy.node import Node
 
 from sensor_msgs.msg import Image, CameraInfo
-from geometry_msgs.msg import PoseStamped
-from std_msgs.msg import Bool
+from std_msgs.msg import Bool, Float32MultiArray
 from cv_bridge import CvBridge
 
 import cv2
@@ -36,7 +35,11 @@ class ArucoDetectorNode_Realsense(Node):
 
         # Publisher
         self.image_pub = self.create_publisher(Image, '/aruco/image', 10)
-        self.pose_pub = self.create_publisher(PoseStamped, '/aruco/marker_pose', 10)
+        # [x, z] (m): x = 카메라 기준 오른쪽(+), z = 카메라 정면 거리. 마커가 검출될 때만 발행
+        self.declare_parameter('xz_topic', '/aruco/marker_pose')  # 토픽 이름 (필요하면 실행 때 변경 가능)
+        self.xz_pub = self.create_publisher(
+            Float32MultiArray, self.get_parameter('xz_topic').value, 10)
+        # 마커 검출 여부 (True/False). 매 프레임 발행
         self.detected_pub = self.create_publisher(Bool, '/aruco/detected', 10)
 
         self.get_logger().info('ArucoDetectorNode start ~~ (Realsense)')
@@ -104,17 +107,10 @@ class ArucoDetectorNode_Realsense(Node):
                     cv2.putText(frame, text, (10, 25 + i * 22),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
-                # 결과 Publish
-                pose_msg = PoseStamped()
-                pose_msg.header = msg.header  # 카메라 타임스탬프, frame_id 사용
-                pose_msg.pose.position.x = float(tvec[0])
-                pose_msg.pose.position.y = float(tvec[1])
-                pose_msg.pose.position.z = float(tvec[2])
-                pose_msg.pose.orientation.x = float(quaternion[0])
-                pose_msg.pose.orientation.y = float(quaternion[1])
-                pose_msg.pose.orientation.z = float(quaternion[2])
-                pose_msg.pose.orientation.w = float(quaternion[3])
-                self.pose_pub.publish(pose_msg)
+                # 결과 Publish: [x, z] 만 float 배열로 전달
+                xz_msg = Float32MultiArray()
+                xz_msg.data = [float(tvec[0]), float(tvec[2])]
+                self.xz_pub.publish(xz_msg)
 
                 self.get_logger().info(
                     f'x={tvec[0]:.3f} y={tvec[1]:.3f} z={tvec[2]:.3f}',
@@ -124,7 +120,7 @@ class ArucoDetectorNode_Realsense(Node):
             cv2.putText(frame, 'NO MARKER', (10, 25),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
 
-        # 검출 여부 Publish (제어부가 마커 유무를 판단할 수 있도록)
+        # 검출 여부 Publish (매 프레임)
         det_msg = Bool()
         det_msg.data = detected
         self.detected_pub.publish(det_msg)
